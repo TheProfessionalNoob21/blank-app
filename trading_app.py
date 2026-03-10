@@ -3,6 +3,26 @@ Trading Strategy App — SMA, EMA, RSI & ATR
 Run with: streamlit run trading_app.py
 """
 
+
+
+
+
+import subprocess
+import sys
+
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package, "-q"])
+
+required = ["streamlit", "yfinance", "pandas", "numpy", "matplotlib"]
+
+for package in required:
+    try:
+        __import__(package)
+    except ImportError:
+        print(f"Installing {package}...")
+        install(package)
+
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
