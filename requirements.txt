@@ -1,5 +1,6 @@
+streamlit==1.41.0
+altair==4.2.2
 yfinance
 pandas
 numpy
 matplotlib
-streamlit
