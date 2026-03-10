@@ -10,7 +10,9 @@ import matplotlib.gridspec as gridspec
 import yfinance as yf
 import streamlit as st
 import warnings
+import time
 warnings.filterwarnings("ignore")
+from streamlit_autorefresh import st_autorefresh
 
 
 # ─────────────────────────────────────────────
@@ -563,6 +565,13 @@ def make_chart(df, benchmark, cfg):
 
 
 # ─────────────────────────────────────────────
+#  AUTO REFRESH (live quote every 30s)
+# ─────────────────────────────────────────────
+
+REFRESH_INTERVAL = 30  # seconds
+# autorefresh will be set after sidebar reads interval
+
+# ─────────────────────────────────────────────
 #  SIDEBAR
 # ─────────────────────────────────────────────
 
@@ -606,16 +615,22 @@ with st.sidebar:
 
     st.markdown("---")
     run_btn = st.button("▶ Run Strategy")
+    st.markdown("---")
+    refresh_interval = st.selectbox("Live Quote Refresh", [15, 30, 60, 120], index=1, format_func=lambda x: f"Every {x}s")
+    REFRESH_INTERVAL = refresh_interval
 
 
 # ─────────────────────────────────────────────
 #  MAIN PANEL
 # ─────────────────────────────────────────────
 
+# Set autorefresh with user-selected interval
+st_autorefresh(interval=refresh_interval * 1000, key="live_refresh")
+
 st.markdown('<div class="main-header">AlgoTrader</div>', unsafe_allow_html=True)
 st.markdown('<div class="main-sub">SMA · EMA · RSI · ATR — Rule-Based Strategy Backtester</div>', unsafe_allow_html=True)
 
-if not run_btn:
+if not run_btn and "backtest_results" not in st.session_state:
     st.markdown("""
     <div style="background:#0d1224; border:1px solid #1e2a45; border-radius:10px; padding:2rem; margin-top:1rem;">
         <p style="font-family:'IBM Plex Mono',monospace; font-size:0.85rem; color:#64748b; margin:0;">
@@ -658,29 +673,68 @@ cfg = {
     "initial_capital": initial_capital,
 }
 
-with st.spinner(f"Fetching {TICKER} data..."):
-    try:
-        df_raw = yf.download(TICKER, start=start_date, end=end_date, progress=False, auto_adjust=True)
-        if isinstance(df_raw.columns, pd.MultiIndex):
-            df_raw.columns = df_raw.columns.droplevel(1)
-        df_raw.columns = [c.lower() for c in df_raw.columns]
-        df_raw.dropna(inplace=True)
-
-        if len(df_raw) == 0:
-            st.error(f"No data found for **{TICKER}**. Check the ticker symbol and try again.")
+# ── Run backtest only when button is clicked, cache results ──
+if run_btn:
+    with st.spinner(f"Fetching {TICKER} data..."):
+        try:
+            df_raw = yf.download(TICKER, start=start_date, end=end_date, progress=False, auto_adjust=True)
+            if isinstance(df_raw.columns, pd.MultiIndex):
+                df_raw.columns = df_raw.columns.droplevel(1)
+            df_raw.columns = [c.lower() for c in df_raw.columns]
+            df_raw.dropna(inplace=True)
+            if len(df_raw) == 0:
+                st.error(f"No data found for **{TICKER}**. Check the ticker symbol and try again.")
+                st.stop()
+        except Exception as e:
+            st.error(f"Failed to fetch data: {e}")
             st.stop()
 
-    except Exception as e:
-        st.error(f"Failed to fetch data: {e}")
-        st.stop()
+    with st.spinner("Running backtest..."):
+        df = compute_indicators(df_raw.copy(), cfg)
+        df = generate_signals(df, cfg)
+        df = run_backtest(df, cfg)
+        benchmark = run_benchmark(df, cfg)
+        m_strat = compute_metrics(df["equity"],  "Strategy")
+        m_bench = compute_metrics(benchmark,     "Buy & Hold")
 
-with st.spinner("Running backtest..."):
-    df = compute_indicators(df_raw.copy(), cfg)
-    df = generate_signals(df, cfg)
-    df = run_backtest(df, cfg)
-    benchmark = run_benchmark(df, cfg)
-    m_strat = compute_metrics(df["equity"],  "Strategy")
-    m_bench = compute_metrics(benchmark,     "Buy & Hold")
+    st.session_state["backtest_results"] = {
+        "df": df, "df_raw": df_raw, "benchmark": benchmark,
+        "m_strat": m_strat, "m_bench": m_bench,
+        "cfg": cfg, "TICKER": TICKER, "exchange": exchange,
+        "start_date": start_date, "end_date": end_date,
+    }
+
+# ── Load from cache (also used on auto-refresh) ──
+if "backtest_results" not in st.session_state:
+    st.stop()
+
+cached      = st.session_state["backtest_results"]
+df          = cached["df"]
+df_raw      = cached["df_raw"]
+benchmark   = cached["benchmark"]
+m_strat     = cached["m_strat"]
+m_bench     = cached["m_bench"]
+cfg         = cached["cfg"]
+TICKER      = cached["TICKER"]
+exchange    = cached["exchange"]
+start_date  = cached["start_date"]
+end_date    = cached["end_date"]
+
+# ── Live indicator + last updated ──
+last_updated = time.strftime("%H:%M:%S")
+st.markdown(f"""
+<div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:0.5rem;">
+    <span style="width:8px; height:8px; border-radius:50%; background:#4ade80; display:inline-block; animation:pulse 2s infinite;"></span>
+    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem; color:#4ade80;">LIVE</span>
+    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem; color:#334155;">· Quote refreshes every {refresh_interval}s · Last updated {last_updated} UTC · Backtest pinned to last run</span>
+</div>
+<style>
+@keyframes pulse {{
+    0%, 100% {{ opacity: 1; }}
+    50% {{ opacity: 0.3; }}
+}}
+</style>
+""", unsafe_allow_html=True)
 
 # ── Ticker tag + period ──
 st.markdown(f"""
