@@ -3,26 +3,6 @@ Trading Strategy App — SMA, EMA, RSI & ATR
 Run with: streamlit run trading_app.py
 """
 
-
-
-
-
-import subprocess
-import sys
-
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package, "-q"])
-
-required = ["streamlit", "yfinance", "pandas", "numpy", "matplotlib"]
-
-for package in required:
-    try:
-        __import__(package)
-    except ImportError:
-        print(f"Installing {package}...")
-        install(package)
-
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -130,6 +110,59 @@ section[data-testid="stSidebar"] * {
     font-size: 0.75rem;
     color: #38bdf8;
     margin-right: 0.5rem;
+}
+
+/* Bloomberg panel */
+.bbg-panel {
+    background: #0d1224;
+    border: 1px solid #1e2a45;
+    border-radius: 10px;
+    padding: 1.4rem 1.6rem;
+    margin: 1rem 0 1.5rem 0;
+}
+.bbg-name {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin-bottom: 0.15rem;
+}
+.bbg-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.68rem;
+    color: #475569;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 1rem;
+}
+.bbg-price {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 2rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    line-height: 1;
+}
+.bbg-chg-pos { font-family:'IBM Plex Mono',monospace; font-size:0.9rem; color:#4ade80; margin-left:0.6rem; }
+.bbg-chg-neg { font-family:'IBM Plex Mono',monospace; font-size:0.9rem; color:#f87171; margin-left:0.6rem; }
+.bbg-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.6rem 2rem;
+    margin-top: 1.2rem;
+    border-top: 1px solid #1e2a45;
+    padding-top: 1rem;
+}
+.bbg-kv { display: flex; flex-direction: column; }
+.bbg-k  { font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#475569; text-transform:uppercase; letter-spacing:0.08em; }
+.bbg-v  { font-family:'IBM Plex Mono',monospace; font-size:0.85rem; color:#e2e8f0; margin-top:0.15rem; }
+.bbg-desc {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 0.78rem;
+    color: #64748b;
+    line-height: 1.6;
+    margin-top: 1rem;
+    border-top: 1px solid #1e2a45;
+    padding-top: 0.9rem;
 }
 
 /* Streamlit overrides */
@@ -295,6 +328,142 @@ def compute_metrics(equity, label="Strategy"):
         "Win Rate":        win_rate,
     }
 
+def get_stock_info(ticker):
+    try:
+        t    = yf.Ticker(ticker)
+        info = t.info
+        hist = t.history(period="5d")
+        prev_close = hist["Close"].iloc[-2] if len(hist) >= 2 else None
+        curr_price = hist["Close"].iloc[-1]  if len(hist) >= 1 else None
+        day_chg    = ((curr_price - prev_close) / prev_close * 100) if (curr_price and prev_close) else None
+
+        # OHLC today
+        today_open  = hist["Open"].iloc[-1]  if len(hist) >= 1 else None
+        today_high  = hist["High"].iloc[-1]  if len(hist) >= 1 else None
+        today_low   = hist["Low"].iloc[-1]   if len(hist) >= 1 else None
+        today_vol   = hist["Volume"].iloc[-1] if len(hist) >= 1 else None
+
+        def fmt_large(v):
+            if v is None: return "—"
+            try: v = float(v)
+            except: return "—"
+            if v >= 1e12: return f"{v/1e12:.2f}T"
+            if v >= 1e9:  return f"{v/1e9:.2f}B"
+            if v >= 1e6:  return f"{v/1e6:.2f}M"
+            return f"{v:,.0f}"
+
+        def safe(key, fmt=None, suffix=""):
+            v = info.get(key)
+            if v is None or v == "N/A": return "—"
+            try:
+                if fmt: return fmt.format(float(v)) + suffix
+            except: return "—"
+            return str(v) + suffix
+
+        def pct(key):
+            v = info.get(key)
+            if v is None: return "—"
+            try: return f"{float(v)*100:.2f}%"
+            except: return "—"
+
+        # Analyst recommendations
+        try:
+            rec = t.recommendations
+            if rec is not None and not rec.empty:
+                # latest 90 days summary
+                cols = [c for c in rec.columns if c.lower() in ["strongbuy","buy","hold","sell","strongsell"]]
+                if cols:
+                    latest = rec.iloc[-1]
+                    analyst_summary = {c: int(latest.get(c, 0)) for c in cols}
+                else:
+                    analyst_summary = {}
+            else:
+                analyst_summary = {}
+        except:
+            analyst_summary = {}
+
+        # News
+        try:
+            news_raw = t.news or []
+            news = []
+            for n in news_raw[:6]:
+                content = n.get("content", {})
+                title = content.get("title") or n.get("title", "")
+                pub = content.get("pubDate") or n.get("providerPublishTime", "")
+                provider = content.get("provider", {}).get("displayName", "") if isinstance(content.get("provider"), dict) else ""
+                link_obj = content.get("canonicalUrl", {})
+                link = link_obj.get("url", "") if isinstance(link_obj, dict) else n.get("link", "")
+                if title:
+                    news.append({"title": title, "publisher": provider, "link": link, "time": str(pub)[:10]})
+        except:
+            news = []
+
+        return {
+            "name":         info.get("longName", ticker),
+            "sector":       info.get("sector", "—"),
+            "industry":     info.get("industry", "—"),
+            "country":      info.get("country", "—"),
+            "currency":     info.get("currency", ""),
+            "exchange":     info.get("exchange", "—"),
+            "curr_price":   f"{curr_price:.2f}" if curr_price else "—",
+            "day_chg":      day_chg,
+            "prev_close":   f"{prev_close:.2f}" if prev_close else "—",
+            "open":         f"{today_open:.2f}" if today_open else "—",
+            "high":         f"{today_high:.2f}" if today_high else "—",
+            "low":          f"{today_low:.2f}"  if today_low  else "—",
+            "volume":       fmt_large(today_vol),
+            "week52_high":  safe("fiftyTwoWeekHigh", "{:.2f}"),
+            "week52_low":   safe("fiftyTwoWeekLow",  "{:.2f}"),
+            "mkt_cap":      fmt_large(info.get("marketCap")),
+            "enterprise_val": fmt_large(info.get("enterpriseValue")),
+            "pe_ratio":     safe("trailingPE", "{:.2f}"),
+            "fwd_pe":       safe("forwardPE",  "{:.2f}"),
+            "peg":          safe("pegRatio",   "{:.2f}"),
+            "ps_ratio":     safe("priceToSalesTrailing12Months", "{:.2f}"),
+            "pb_ratio":     safe("priceToBook", "{:.2f}"),
+            "ev_ebitda":    safe("enterpriseToEbitda", "{:.2f}"),
+            "eps":          safe("trailingEps", "{:.2f}"),
+            "fwd_eps":      safe("forwardEps",  "{:.2f}"),
+            "beta":         safe("beta", "{:.2f}"),
+            "div_yield":    pct("dividendYield"),
+            "div_rate":     safe("dividendRate", "{:.2f}"),
+            "payout_ratio": pct("payoutRatio"),
+            "avg_volume":   fmt_large(info.get("averageVolume")),
+            "float_shares": fmt_large(info.get("floatShares")),
+            "shares_out":   fmt_large(info.get("sharesOutstanding")),
+            "short_pct":    pct("shortPercentOfFloat"),
+            "inst_own":     pct("heldPercentInstitutions"),
+            "insider_own":  pct("heldPercentInsiders"),
+            # Financials
+            "revenue":      fmt_large(info.get("totalRevenue")),
+            "gross_margin": pct("grossMargins"),
+            "op_margin":    pct("operatingMargins"),
+            "net_margin":   pct("profitMargins"),
+            "ebitda":       fmt_large(info.get("ebitda")),
+            "free_cashflow":fmt_large(info.get("freeCashflow")),
+            "total_cash":   fmt_large(info.get("totalCash")),
+            "total_debt":   fmt_large(info.get("totalDebt")),
+            "debt_equity":  safe("debtToEquity", "{:.2f}"),
+            "current_ratio":safe("currentRatio", "{:.2f}"),
+            "roe":          pct("returnOnEquity"),
+            "roa":          pct("returnOnAssets"),
+            "rev_growth":   pct("revenueGrowth"),
+            "earn_growth":  pct("earningsGrowth"),
+            # Analyst
+            "target_mean":  safe("targetMeanPrice",   "{:.2f}"),
+            "target_high":  safe("targetHighPrice",   "{:.2f}"),
+            "target_low":   safe("targetLowPrice",    "{:.2f}"),
+            "recommendation": info.get("recommendationKey", "—").replace("_", " ").title(),
+            "analyst_count":  safe("numberOfAnalystOpinions", "{:.0f}"),
+            "analyst_summary": analyst_summary,
+            # News
+            "news": news,
+            "description": info.get("longBusinessSummary", ""),
+        }
+    except Exception:
+        return None
+
+
 def parameter_sweep(df_raw, cfg):
     results = []
     for sf in [20, 50, 100]:
@@ -441,7 +610,7 @@ with st.sidebar:
 #  MAIN PANEL
 # ─────────────────────────────────────────────
 
-st.markdown('<div class="main-header">Project WhiteSand</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">AlgoTrader</div>', unsafe_allow_html=True)
 st.markdown('<div class="main-sub">SMA · EMA · RSI · ATR — Rule-Based Strategy Backtester</div>', unsafe_allow_html=True)
 
 if not run_btn:
@@ -522,6 +691,179 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
+# ── Bloomberg Info Panel ──
+with st.spinner("Loading company data..."):
+    info = get_stock_info(TICKER)
+
+if info:
+    chg_val  = info["day_chg"]
+    chg_html = ""
+    if chg_val is not None:
+        sign     = "+" if chg_val >= 0 else ""
+        cls      = "bbg-chg-pos" if chg_val >= 0 else "bbg-chg-neg"
+        chg_html = f'<span class="{cls}">{sign}{chg_val:.2f}%</span>'
+
+    # ── Header bar (always visible) ──
+    st.markdown(f"""
+    <div class="bbg-panel" style="padding-bottom:1rem;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem;">
+            <div>
+                <div class="bbg-name">{info["name"]}</div>
+                <div class="bbg-meta">{info["sector"]} &nbsp;·&nbsp; {info["industry"]} &nbsp;·&nbsp; {info["country"]} &nbsp;·&nbsp; {info["exchange"]}</div>
+                <div style="margin-top:0.5rem;">
+                    <span class="bbg-price">{info["currency"]} {info["curr_price"]}</span>
+                    {chg_html}
+                </div>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.5rem 2rem; align-self:flex-end;">
+                <div class="bbg-kv"><span class="bbg-k">Open</span>    <span class="bbg-v">{info["open"]}</span></div>
+                <div class="bbg-kv"><span class="bbg-k">High</span>    <span class="bbg-v">{info["high"]}</span></div>
+                <div class="bbg-kv"><span class="bbg-k">Low</span>     <span class="bbg-v">{info["low"]}</span></div>
+                <div class="bbg-kv"><span class="bbg-k">Volume</span>  <span class="bbg-v">{info["volume"]}</span></div>
+                <div class="bbg-kv"><span class="bbg-k">Prev Close</span><span class="bbg-v">{info["prev_close"]}</span></div>
+                <div class="bbg-kv"><span class="bbg-k">52W High</span><span class="bbg-v">{info["week52_high"]}</span></div>
+                <div class="bbg-kv"><span class="bbg-k">52W Low</span> <span class="bbg-v">{info["week52_low"]}</span></div>
+                <div class="bbg-kv"><span class="bbg-k">Avg Vol</span> <span class="bbg-v">{info["avg_volume"]}</span></div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Tabs ──
+    tab_ov, tab_fin, tab_val, tab_own, tab_analyst, tab_news = st.tabs([
+        "📊 Overview", "💰 Financials", "📐 Valuation", "🏦 Ownership", "🎯 Analysts", "📰 News"
+    ])
+
+    with tab_ov:
+        desc = info["description"]
+        if len(desc) > 600:
+            desc = desc[:600].rsplit(" ", 1)[0] + "…"
+        st.markdown(f"""
+        <div class="bbg-grid" style="grid-template-columns:repeat(4,1fr); margin-top:1rem;">
+            <div class="bbg-kv"><span class="bbg-k">Market Cap</span>     <span class="bbg-v">{info["mkt_cap"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Enterprise Val</span> <span class="bbg-v">{info["enterprise_val"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Beta</span>           <span class="bbg-v">{info["beta"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Float Shares</span>   <span class="bbg-v">{info["float_shares"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Shares Out</span>     <span class="bbg-v">{info["shares_out"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Div Yield</span>      <span class="bbg-v">{info["div_yield"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Div Rate</span>       <span class="bbg-v">{info["div_rate"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Payout Ratio</span>   <span class="bbg-v">{info["payout_ratio"]}</span></div>
+        </div>
+        {"<div class='bbg-desc' style='margin-top:1rem;'>" + desc + "</div>" if desc else ""}
+        """, unsafe_allow_html=True)
+
+    with tab_fin:
+        st.markdown(f"""
+        <div class="bbg-grid" style="grid-template-columns:repeat(4,1fr); margin-top:1rem;">
+            <div class="bbg-kv"><span class="bbg-k">Revenue (TTM)</span>   <span class="bbg-v">{info["revenue"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">EBITDA</span>          <span class="bbg-v">{info["ebitda"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Free Cash Flow</span>  <span class="bbg-v">{info["free_cashflow"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Total Cash</span>      <span class="bbg-v">{info["total_cash"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Total Debt</span>      <span class="bbg-v">{info["total_debt"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Debt / Equity</span>   <span class="bbg-v">{info["debt_equity"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Current Ratio</span>   <span class="bbg-v">{info["current_ratio"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Rev Growth (YoY)</span><span class="bbg-v">{info["rev_growth"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Earn Growth (YoY)</span><span class="bbg-v">{info["earn_growth"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Gross Margin</span>    <span class="bbg-v">{info["gross_margin"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Op. Margin</span>      <span class="bbg-v">{info["op_margin"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Net Margin</span>      <span class="bbg-v">{info["net_margin"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">ROE</span>             <span class="bbg-v">{info["roe"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">ROA</span>             <span class="bbg-v">{info["roa"]}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab_val:
+        st.markdown(f"""
+        <div class="bbg-grid" style="grid-template-columns:repeat(4,1fr); margin-top:1rem;">
+            <div class="bbg-kv"><span class="bbg-k">P/E (TTM)</span>    <span class="bbg-v">{info["pe_ratio"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Fwd P/E</span>      <span class="bbg-v">{info["fwd_pe"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">PEG Ratio</span>    <span class="bbg-v">{info["peg"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">P/S (TTM)</span>    <span class="bbg-v">{info["ps_ratio"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">P/B</span>          <span class="bbg-v">{info["pb_ratio"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">EV/EBITDA</span>    <span class="bbg-v">{info["ev_ebitda"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">EPS (TTM)</span>    <span class="bbg-v">{info["eps"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Fwd EPS</span>      <span class="bbg-v">{info["fwd_eps"]}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab_own:
+        st.markdown(f"""
+        <div class="bbg-grid" style="grid-template-columns:repeat(4,1fr); margin-top:1rem;">
+            <div class="bbg-kv"><span class="bbg-k">Institutional Own</span><span class="bbg-v">{info["inst_own"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Insider Own</span>      <span class="bbg-v">{info["insider_own"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Short % of Float</span> <span class="bbg-v">{info["short_pct"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Float Shares</span>     <span class="bbg-v">{info["float_shares"]}</span></div>
+            <div class="bbg-kv"><span class="bbg-k">Shares Out</span>       <span class="bbg-v">{info["shares_out"]}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab_analyst:
+        rec_key = info["recommendation"]
+        rec_color = {"Strong Buy":"#4ade80","Buy":"#86efac","Hold":"#fbbf24","Sell":"#f87171","Strong Sell":"#ef4444"}.get(rec_key, "#94a3b8")
+        summary = info["analyst_summary"]
+
+        bars_html = ""
+        if summary:
+            total = sum(summary.values()) or 1
+            label_map = {"strongBuy":"Strong Buy","buy":"Buy","hold":"Hold","sell":"Sell","strongSell":"Strong Sell"}
+            color_map = {"strongBuy":"#4ade80","buy":"#86efac","hold":"#fbbf24","sell":"#f87171","strongSell":"#ef4444"}
+            for k, v in summary.items():
+                pct_w = v / total * 100
+                lbl = label_map.get(k, k)
+                col = color_map.get(k, "#94a3b8")
+                bars_html += f"""
+                <div style="display:flex; align-items:center; gap:0.8rem; margin-bottom:0.5rem;">
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#64748b; width:80px; text-align:right;">{lbl}</span>
+                    <div style="flex:1; background:#1e2a45; border-radius:3px; height:14px;">
+                        <div style="width:{pct_w:.0f}%; background:{col}; height:14px; border-radius:3px;"></div>
+                    </div>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.7rem; color:#e2e8f0; width:20px;">{v}</span>
+                </div>"""
+
+        st.markdown(f"""
+        <div style="margin-top:1rem;">
+            <div style="display:flex; align-items:center; gap:1.5rem; margin-bottom:1.2rem;">
+                <div>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#475569; text-transform:uppercase;">Consensus</span><br/>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:1.4rem; font-weight:600; color:{rec_color};">{rec_key}</span>
+                </div>
+                <div>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#475569; text-transform:uppercase;">Analysts</span><br/>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:1.4rem; font-weight:600; color:#f1f5f9;">{info["analyst_count"]}</span>
+                </div>
+                <div>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#475569; text-transform:uppercase;">Price Target</span><br/>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:1.4rem; font-weight:600; color:#38bdf8;">{info["currency"]} {info["target_mean"]}</span>
+                </div>
+                <div>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.6rem; color:#475569; text-transform:uppercase;">Range</span><br/>
+                    <span style="font-family:'IBM Plex Mono',monospace; font-size:0.9rem; color:#94a3b8;">{info["target_low"]} – {info["target_high"]}</span>
+                </div>
+            </div>
+            {bars_html}
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab_news:
+        news_items = info.get("news", [])
+        if news_items:
+            for n in news_items:
+                title     = n.get("title", "")
+                publisher = n.get("publisher", "")
+                link      = n.get("link", "")
+                time_str  = n.get("time", "")
+                link_html = f'<a href="{link}" target="_blank" style="color:#38bdf8; text-decoration:none;">{title}</a>' if link else f'<span style="color:#e2e8f0;">{title}</span>'
+                st.markdown(f"""
+                <div style="padding:0.8rem 0; border-bottom:1px solid #1e2a45;">
+                    <div style="font-family:'IBM Plex Sans',sans-serif; font-size:0.85rem; margin-bottom:0.25rem;">{link_html}</div>
+                    <div style="font-family:'IBM Plex Mono',monospace; font-size:0.65rem; color:#475569;">{publisher} &nbsp;·&nbsp; {time_str}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown('<p style="font-family:\'IBM Plex Mono\',monospace; font-size:0.8rem; color:#475569;">No recent news available.</p>', unsafe_allow_html=True)
+
+st.markdown("<hr style='border-color:#1e2a45; margin: 0.5rem 0 1rem 0;'>", unsafe_allow_html=True)
+
 # ── Metrics row ──
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
 
@@ -561,5 +903,3 @@ st.markdown("""
     Strategy backtests are for educational purposes only. Not financial advice.
 </p>
 """, unsafe_allow_html=True)
-
-
