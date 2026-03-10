@@ -272,13 +272,15 @@ def generate_signals(df, cfg):
     return df
 
 def compute_position_size(row, portfolio_value, cfg):
-    if row["atr"] == 0 or np.isnan(row["atr"]):
+    if row["close"] == 0 or np.isnan(row["close"]) or row["atr"] == 0 or np.isnan(row["atr"]):
         return 0.0
-    risk_dollars  = portfolio_value * cfg["risk_per_trade"]
-    stop_distance = row["atr"] * cfg["atr_multiplier"]
-    shares        = risk_dollars / stop_distance
-    max_shares    = portfolio_value / row["close"]
-    return min(shares, max_shares)
+    # Volatility targeting: ATR as % of price (normalised volatility)
+    # Higher ATR  → smaller position  (more volatile, be cautious)
+    # Lower ATR   → larger position   (calmer market, deploy more)
+    atr_pct    = row["atr"] / row["close"]                      # e.g. 0.02 = 2% daily range
+    target_vol = cfg["risk_per_trade"] * cfg["atr_multiplier"]  # target portfolio risk per trade
+    deploy_pct = min(target_vol / atr_pct, 0.95)                # cap at 95% of portfolio
+    return (portfolio_value * deploy_pct) / row["close"]
 
 def run_backtest(df, cfg):
     cash, shares_held, equity, prev_pos = cfg["initial_capital"], 0.0, [], 0
