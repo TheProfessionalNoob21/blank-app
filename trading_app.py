@@ -753,6 +753,27 @@ st.markdown(f"""
 with st.spinner("Loading company data..."):
     info = get_stock_info(TICKER)
 
+# Fallback so tabs always render even if yfinance returns nothing
+if not info:
+    info = {
+        "name": TICKER, "sector": "—", "industry": "—", "country": "—",
+        "exchange": "—", "currency": "", "curr_price": "—", "day_chg": None,
+        "prev_close": "—", "open": "—", "high": "—", "low": "—", "volume": "—",
+        "week52_high": "—", "week52_low": "—", "mkt_cap": "—", "enterprise_val": "—",
+        "pe_ratio": "—", "fwd_pe": "—", "peg": "—", "ps_ratio": "—", "pb_ratio": "—",
+        "ev_ebitda": "—", "eps": "—", "fwd_eps": "—", "beta": "—",
+        "div_yield": "—", "div_rate": "—", "payout_ratio": "—",
+        "avg_volume": "—", "float_shares": "—", "shares_out": "—",
+        "short_pct": "—", "inst_own": "—", "insider_own": "—",
+        "revenue": "—", "gross_margin": "—", "op_margin": "—", "net_margin": "—",
+        "ebitda": "—", "free_cashflow": "—", "total_cash": "—", "total_debt": "—",
+        "debt_equity": "—", "current_ratio": "—", "roe": "—", "roa": "—",
+        "rev_growth": "—", "earn_growth": "—",
+        "target_mean": "—", "target_high": "—", "target_low": "—",
+        "recommendation": "—", "analyst_count": "—", "analyst_summary": {},
+        "news": [], "description": "Company data unavailable — yfinance may be rate-limiting. Try again shortly.",
+    }
+
 if info:
     chg_val  = info["day_chg"]
     chg_html = ""
